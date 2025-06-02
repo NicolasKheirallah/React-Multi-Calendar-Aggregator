@@ -1,0 +1,21 @@
+{
+  "@microsoft/generator-sharepoint": {
+    "plusBeta": false,
+    "isCreatingSolution": true,
+    "nodeVersion": "18.20.5",
+    "sdksVersions": {
+      "@microsoft/microsoft-graph-client": "3.0.2",
+      "@microsoft/teams-js": "2.24.0"
+    },
+    "version": "1.20.0",
+    "libraryName": "multi-calendar-aggregator",
+    "libraryId": "0222d90f-8a67-49bd-ae9f-288b0775db27",
+    "environment": "spo",
+    "packageManager": "npm",
+    "solutionName": "multi-calendar-aggregator",
+    "solutionShortDescription": "multi-calendar-aggregator description",
+    "skipFeatureDeployment": true,
+    "isDomainIsolated": false,
+    "componentType": "webpart"
+  }
+}

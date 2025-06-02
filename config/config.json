@@ -1,0 +1,18 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/spfx-build/config.2.0.schema.json",
+  "version": "2.0",
+  "bundles": {
+    "multi-calendar-aggregator-web-part": {
+      "components": [
+        {
+          "entrypoint": "./lib/webparts/multiCalendarAggregator/MultiCalendarAggregatorWebPart.js",
+          "manifest": "./src/webparts/multiCalendarAggregator/MultiCalendarAggregatorWebPart.manifest.json"
+        }
+      ]
+    }
+  },
+  "externals": {},
+  "localizedResources": {
+    "MultiCalendarAggregatorWebPartStrings": "lib/webparts/multiCalendarAggregator/loc/{locale}.js"
+  }
+}
