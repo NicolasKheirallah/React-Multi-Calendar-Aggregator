@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Stack,
   Text,
@@ -36,6 +36,52 @@ const localizer = momentLocalizer(moment);
 
 const stackTokens: IStackTokens = { childrenGap: 15 };
 
+// Error Boundary Component
+interface IErrorBoundaryState {
+  hasError: boolean;
+  error?: Error;
+}
+
+class ErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  IErrorBoundaryState
+> {
+  constructor(props: { children: React.ReactNode }) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  public static getDerivedStateFromError(error: Error): IErrorBoundaryState {
+    return { hasError: true, error };
+  }
+
+  public override componentDidCatch(error: Error, errorInfo: React.ErrorInfo): void {
+    console.error('Calendar component error:', error, errorInfo);
+  }
+
+  public override render(): React.ReactNode {
+    if (this.state.hasError) {
+      return (
+        <MessageBar messageBarType={MessageBarType.error}>
+          <Text>
+            Something went wrong with the calendar component. Please refresh the page.
+            {this.state.error && (
+              <details style={{ marginTop: '8px' }}>
+                <summary>Error details</summary>
+                <pre style={{ fontSize: '12px', marginTop: '4px' }}>
+                  {this.state.error.message}
+                </pre>
+              </details>
+            )}
+          </Text>
+        </MessageBar>
+      );
+    }
+
+    return this.props.children;
+  }
+}
+
 const MultiCalendarAggregator: React.FC<IMultiCalendarAggregatorProps> = (props) => {
   const theme: ITheme = useTheme();
   const [events, setEvents] = useState<ICalendarEvent[]>([]);
@@ -50,74 +96,54 @@ const MultiCalendarAggregator: React.FC<IMultiCalendarAggregatorProps> = (props)
   const [currentView, setCurrentView] = useState<string>(props.viewType);
   const [currentDate, setCurrentDate] = useState<Date>(new Date());
 
-  const calendarService = new CalendarService(props.context);
+  // Memoize calendar service to prevent recreation
+  const calendarService = useMemo(() => {
+    try {
+      return new CalendarService(props.context);
+    } catch (error) {
+      console.error('Failed to create calendar service:', error);
+      return null;
+    }
+  }, [props.context]);
 
-  // Container styles
-  const containerStyles = mergeStyles({
+  // Container styles - memoized to prevent recreation
+  const containerStyles = useMemo(() => mergeStyles({
     padding: '20px',
     backgroundColor: theme.palette.neutralLighterAlt,
     borderRadius: '8px',
     minHeight: '600px',
     boxShadow: theme.effects.elevation4,
     border: `1px solid ${theme.palette.neutralLight}`,
-    '& .rbc-calendar': {
-      backgroundColor: theme.palette.white,
-      borderRadius: '6px',
-      overflow: 'hidden',
-      boxShadow: theme.effects.elevation8,
-      border: `1px solid ${theme.palette.neutralLight}`,
-    },
-    '& .rbc-header': {
-      backgroundColor: theme.palette.themePrimary,
-      color: theme.palette.white,
-      fontWeight: 600,
-      padding: '12px 8px',
-      borderBottom: 'none',
-    },
-    '& .rbc-today': {
-      backgroundColor: theme.palette.themeLighter,
-    },
-    '& .rbc-event': {
-      borderRadius: '4px',
-      border: 'none',
-      fontWeight: 500,
-      fontSize: '12px',
-      boxShadow: theme.effects.elevation4,
-    },
-    '& .rbc-month-view': {
-      border: 'none',
-    },
-    '& .rbc-day-bg': {
-      borderRight: `1px solid ${theme.palette.neutralLighter}`,
-      borderBottom: `1px solid ${theme.palette.neutralLighter}`,
-    },
-    '& .rbc-time-view .rbc-time-gutter': {
-      backgroundColor: theme.palette.neutralLighterAlt,
-      borderRight: `1px solid ${theme.palette.neutralLight}`,
-    },
-    '& .rbc-current-time-indicator': {
-      backgroundColor: theme.palette.red,
-      height: '2px',
-    }
-  });
+  }), [theme]);
 
-  const headerStyles = mergeStyles({
+  const headerStyles = useMemo(() => mergeStyles({
     backgroundColor: theme.palette.white,
     padding: '16px 20px',
     borderRadius: '8px',
     marginBottom: '16px',
     boxShadow: theme.effects.elevation4,
     border: `1px solid ${theme.palette.neutralLight}`,
-  });
+  }), [theme]);
 
-  // Load calendar data
+  // Load calendar data with proper error handling
   const loadCalendarData = useCallback(async () => {
+    if (!calendarService) {
+      setError('Calendar service initialization failed');
+      setLoading(false);
+      return;
+    }
+
     try {
       setLoading(true);
       setError('');
 
-      // Load calendar sources
-      const sources = await calendarService.getCalendarSources(props.useGraphAPI);
+      // Load calendar sources with timeout
+      const sourcesPromise = calendarService.getCalendarSources(props.useGraphAPI);
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error('Request timeout')), 30000);
+      });
+
+      const sources = await Promise.race([sourcesPromise, timeoutPromise]);
       setCalendarSources(sources);
 
       // Load events from selected calendars
@@ -125,11 +151,15 @@ const MultiCalendarAggregator: React.FC<IMultiCalendarAggregatorProps> = (props)
         props.selectedCalendars.length === 0 || props.selectedCalendars.includes(s.id)
       );
 
-      const allEvents: ICalendarEvent[] = [];
-      for (const source of selectedSources) {
-        const sourceEvents = await calendarService.getEventsFromSource(source, props.maxEvents);
-        allEvents.push(...sourceEvents);
+      if (selectedSources.length === 0) {
+        setEvents([]);
+        setFilteredEvents([]);
+        setLoading(false);
+        return;
       }
+
+      const eventsPromise = calendarService.getEventsFromSources(selectedSources, props.maxEvents);
+      const allEvents = await Promise.race([eventsPromise, timeoutPromise]);
 
       // Sort events by start date
       allEvents.sort((a, b) => new Date(a.start).getTime() - new Date(b.start).getTime());
@@ -138,50 +168,75 @@ const MultiCalendarAggregator: React.FC<IMultiCalendarAggregatorProps> = (props)
       setFilteredEvents(allEvents);
     } catch (err) {
       console.error('Error loading calendar data:', err);
-      setError('Failed to load calendar data. Please check your permissions and try again.');
+      const errorMessage = err instanceof Error ? err.message : 'Unknown error occurred';
+      setError(`Failed to load calendar data: ${errorMessage}`);
+      setEvents([]);
+      setFilteredEvents([]);
     } finally {
       setLoading(false);
     }
-  }, [props.selectedCalendars, props.useGraphAPI, props.maxEvents, calendarService]);
+  }, [calendarService, props.selectedCalendars, props.useGraphAPI, props.maxEvents]);
 
-  // Filter events based on search query
+  // Filter events based on search query - debounced
   useEffect(() => {
-    if (!searchQuery.trim()) {
-      setFilteredEvents(events);
-      return;
-    }
+    const timeoutId = setTimeout(() => {
+      if (!searchQuery.trim()) {
+        setFilteredEvents(events);
+        return;
+      }
 
-    const filtered = events.filter(event =>
-      event.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      event.description?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      event.location?.toLowerCase().includes(searchQuery.toLowerCase())
-    );
+      const query = searchQuery.toLowerCase();
+      const filtered = events.filter(event =>
+        event.title.toLowerCase().includes(query) ||
+        event.description?.toLowerCase().includes(query) ||
+        event.location?.toLowerCase().includes(query)
+      );
 
-    setFilteredEvents(filtered);
+      setFilteredEvents(filtered);
+    }, 300); // Debounce search
+
+    return () => clearTimeout(timeoutId);
   }, [events, searchQuery]);
 
-  // Initial load and auto-refresh
+  // Initial load and auto-refresh with proper cleanup
   useEffect(() => {
-    void loadCalendarData();
+    let mounted = true;
+    let refreshInterval: number | undefined;
 
+    const initialLoad = async (): Promise<void> => {
+      if (mounted) {
+        await loadCalendarData();
+      }
+    };
+
+    // Initial load
+    void initialLoad();
+
+    // Set up auto-refresh
     if (props.refreshInterval > 0) {
-      const interval = setInterval(() => {
-        void loadCalendarData();
+      refreshInterval = window.setInterval(() => {
+        if (mounted) {
+          void loadCalendarData();
+        }
       }, props.refreshInterval * 60 * 1000);
-      return () => clearInterval(interval);
     }
-    
+
+    // Cleanup
     return (): void => {
-      // Empty cleanup function
+      mounted = false;
+      if (refreshInterval) {
+        window.clearInterval(refreshInterval);
+      }
     };
   }, [loadCalendarData, props.refreshInterval]);
 
-  // Command bar items
-  const commandBarItems: ICommandBarItemProps[] = [
+  // Command bar items - memoized
+  const commandBarItems: ICommandBarItemProps[] = useMemo(() => [
     {
       key: 'refresh',
       text: 'Refresh',
       iconProps: { iconName: 'Refresh' },
+      disabled: loading,
       onClick: (): void => {
         void loadCalendarData();
       },
@@ -198,9 +253,9 @@ const MultiCalendarAggregator: React.FC<IMultiCalendarAggregatorProps> = (props)
       iconProps: { iconName: 'DateTime' },
       onClick: (): void => setCurrentDate(new Date()),
     },
-  ];
+  ], [loading, loadCalendarData]);
 
-  const commandBarFarItems: ICommandBarItemProps[] = [
+  const commandBarFarItems: ICommandBarItemProps[] = useMemo(() => [
     {
       key: 'search',
       onRender: () => (
@@ -211,27 +266,28 @@ const MultiCalendarAggregator: React.FC<IMultiCalendarAggregatorProps> = (props)
           styles={{
             root: { width: '250px', marginTop: '4px' }
           }}
+          disabled={loading}
         />
       ),
     },
-  ];
+  ], [searchQuery, loading]);
 
   // Event handlers
-  const handleEventSelect = (event: ICalendarEvent): void => {
+  const handleEventSelect = useCallback((event: ICalendarEvent): void => {
     setSelectedEvent(event);
     setShowEventDetails(true);
-  };
+  }, []);
 
-  const handleNavigate = (date: Date): void => {
+  const handleNavigate = useCallback((date: Date): void => {
     setCurrentDate(date);
-  };
+  }, []);
 
-  const handleViewChange = (view: string): void => {
+  const handleViewChange = useCallback((view: string): void => {
     setCurrentView(view);
-  };
+  }, []);
 
-  // Event style getter for color coding
-  const eventStyleGetter = (event: ICalendarEvent): { style: React.CSSProperties } => {
+  // Event style getter for color coding - memoized
+  const eventStyleGetter = useCallback((event: ICalendarEvent): { style: React.CSSProperties } => {
     if (!props.colorCoding) {
       return {
         style: {
@@ -252,10 +308,18 @@ const MultiCalendarAggregator: React.FC<IMultiCalendarAggregatorProps> = (props)
         color: theme.palette.white,
       }
     };
-  };
+  }, [props.colorCoding, theme, calendarSources]);
 
-  // Render different views
-  const renderCalendarView = (): React.ReactElement => {
+  // Render different views - memoized
+  const renderCalendarView = useCallback((): React.ReactElement => {
+    if (loading) {
+      return (
+        <div style={{ padding: '40px', textAlign: 'center' }}>
+          <Spinner size={SpinnerSize.large} label="Loading events..." />
+        </div>
+      );
+    }
+
     switch (currentView) {
       case 'agenda':
         return (
@@ -314,135 +378,139 @@ const MultiCalendarAggregator: React.FC<IMultiCalendarAggregatorProps> = (props)
           </div>
         );
     }
-  };
+  }, [currentView, filteredEvents, handleEventSelect, calendarSources, theme, currentDate, handleNavigate, handleViewChange, eventStyleGetter, loading]);
 
-  if (loading) {
+  // Early return for loading state
+  if (loading && events.length === 0) {
     return (
-      <div className={containerStyles}>
-        <Stack horizontalAlign="center" verticalAlign="center" styles={{ root: { height: '400px' } }}>
-          <Spinner size={SpinnerSize.large} label="Loading calendar events..." />
-        </Stack>
-      </div>
+      <ErrorBoundary>
+        <div className={containerStyles}>
+          <Stack horizontalAlign="center" verticalAlign="center" styles={{ root: { height: '400px' } }}>
+            <Spinner size={SpinnerSize.large} label="Loading calendar events..." />
+          </Stack>
+        </div>
+      </ErrorBoundary>
     );
   }
 
   return (
-    <div className={containerStyles}>
-      {/* Header */}
-      <div className={headerStyles}>
-        <Stack tokens={stackTokens}>
-          <Stack horizontal horizontalAlign="space-between" verticalAlign="center">
-            <Stack>
-              <Text variant="xLarge" styles={{ root: { fontWeight: 600, color: theme.palette.themePrimary } }}>
-                {props.title || 'Multi-Calendar Aggregator'}
-              </Text>
-              <Text variant="medium" styles={{ root: { color: theme.palette.neutralSecondary } }}>
-                {filteredEvents.length} events from {calendarSources.length} calendar sources
-              </Text>
-            </Stack>
-            <Stack horizontal tokens={{ childrenGap: 8 }}>
-              <Icon
-                iconName="Calendar"
-                styles={{
-                  root: {
-                    fontSize: '24px',
-                    color: theme.palette.themePrimary,
-                  }
-                }}
-              />
+    <ErrorBoundary>
+      <div className={containerStyles}>
+        {/* Header */}
+        <div className={headerStyles}>
+          <Stack tokens={stackTokens}>
+            <Stack horizontal horizontalAlign="space-between" verticalAlign="center">
+              <Stack>
+                <Text variant="xLarge" styles={{ root: { fontWeight: 600, color: theme.palette.themePrimary } }}>
+                  {props.title || 'Multi-Calendar Aggregator'}
+                </Text>
+                <Text variant="medium" styles={{ root: { color: theme.palette.neutralSecondary } }}>
+                  {filteredEvents.length} events from {calendarSources.length} calendar sources
+                </Text>
+              </Stack>
+              <Stack horizontal tokens={{ childrenGap: 8 }}>
+                <Icon
+                  iconName="Calendar"
+                  styles={{
+                    root: {
+                      fontSize: '24px',
+                      color: theme.palette.themePrimary,
+                    }
+                  }}
+                />
+              </Stack>
             </Stack>
           </Stack>
-        </Stack>
-      </div>
+        </div>
 
-      {/* Command Bar */}
-      <CommandBar
-        items={commandBarItems}
-        farItems={commandBarFarItems}
-        styles={{
-          root: {
-            backgroundColor: theme.palette.white,
-            borderRadius: '6px',
-            marginBottom: '16px',
-            boxShadow: theme.effects.elevation4,
-          }
-        }}
-      />
-
-      {/* Error Message */}
-      {error && (
-        <MessageBar
-          messageBarType={MessageBarType.error}
-          isMultiline={false}
-          onDismiss={() => setError('')}
-          dismissButtonAriaLabel="Close"
-          styles={{ root: { marginBottom: '16px' } }}
-        >
-          {error}
-        </MessageBar>
-      )}
-
-      {/* View Selector */}
-      <Pivot
-        selectedKey={currentView}
-        onLinkClick={(item) => item && setCurrentView(item.props.itemKey!)}
-        styles={{
-          root: {
-            backgroundColor: theme.palette.white,
-            borderRadius: '6px',
-            marginBottom: '16px',
-            boxShadow: theme.effects.elevation4,
-            padding: '8px 16px',
-          }
-        }}
-      >
-        <PivotItem headerText="Month" itemKey="month" itemIcon="Calendar" />
-        <PivotItem headerText="Week" itemKey="week" itemIcon="CalendarWeek" />
-        <PivotItem headerText="Day" itemKey="day" itemIcon="CalendarDay" />
-        <PivotItem headerText="Agenda" itemKey="agenda" itemIcon="BulletedList" />
-        <PivotItem headerText="Timeline" itemKey="timeline" itemIcon="Timeline" />
-      </Pivot>
-
-      {/* Calendar View */}
-      {renderCalendarView()}
-
-      {/* Event Details Panel */}
-      <Panel
-        isOpen={showEventDetails}
-        onDismiss={() => setShowEventDetails(false)}
-        type={PanelType.medium}
-        headerText="Event Details"
-        closeButtonAriaLabel="Close"
-      >
-        {selectedEvent && (
-          <EventDetailsPanel
-            event={selectedEvent}
-            calendarSource={calendarSources.find(s => s.id === selectedEvent.calendarId)}
-            onClose={() => setShowEventDetails(false)}
-          />
-        )}
-      </Panel>
-
-      {/* Calendar Sources Panel */}
-      <Panel
-        isOpen={showCalendarSources}
-        onDismiss={() => setShowCalendarSources(false)}
-        type={PanelType.medium}
-        headerText="Manage Calendar Sources"
-        closeButtonAriaLabel="Close"
-      >
-        <CalendarSourcesPanel
-          sources={calendarSources}
-          selectedSources={props.selectedCalendars}
-          onSourcesChange={(selected) => {
-            // Update web part properties
-            // This would typically be passed down as a prop
-            console.log('Selected sources changed:', selected);
+        {/* Command Bar */}
+        <CommandBar
+          items={commandBarItems}
+          farItems={commandBarFarItems}
+          styles={{
+            root: {
+              backgroundColor: theme.palette.white,
+              borderRadius: '6px',
+              marginBottom: '16px',
+              boxShadow: theme.effects.elevation4,
+            }
           }}
-          onClose={() => setShowCalendarSources(false)}
         />
-      </Panel>
-    </div>
+
+        {/* Error Message */}
+        {error && (
+          <MessageBar
+            messageBarType={MessageBarType.error}
+            isMultiline={false}
+            onDismiss={() => setError('')}
+            dismissButtonAriaLabel="Close"
+            styles={{ root: { marginBottom: '16px' } }}
+          >
+            {error}
+          </MessageBar>
+        )}
+
+        {/* View Selector */}
+        <Pivot
+          selectedKey={currentView}
+          onLinkClick={(item) => item && setCurrentView(item.props.itemKey!)}
+          styles={{
+            root: {
+              backgroundColor: theme.palette.white,
+              borderRadius: '6px',
+              marginBottom: '16px',
+              boxShadow: theme.effects.elevation4,
+              padding: '8px 16px',
+            }
+          }}
+        >
+          <PivotItem headerText="Month" itemKey="month" itemIcon="Calendar" />
+          <PivotItem headerText="Week" itemKey="week" itemIcon="CalendarWeek" />
+          <PivotItem headerText="Day" itemKey="day" itemIcon="CalendarDay" />
+          <PivotItem headerText="Agenda" itemKey="agenda" itemIcon="BulletedList" />
+          <PivotItem headerText="Timeline" itemKey="timeline" itemIcon="Timeline" />
+        </Pivot>
+
+        {/* Calendar View */}
+        {renderCalendarView()}
+
+        {/* Event Details Panel */}
+        <Panel
+          isOpen={showEventDetails}
+          onDismiss={() => setShowEventDetails(false)}
+          type={PanelType.medium}
+          headerText="Event Details"
+          closeButtonAriaLabel="Close"
+        >
+          {selectedEvent && (
+            <EventDetailsPanel
+              event={selectedEvent}
+              calendarSource={calendarSources.find(s => s.id === selectedEvent.calendarId)}
+              onClose={() => setShowEventDetails(false)}
+            />
+          )}
+        </Panel>
+
+        {/* Calendar Sources Panel */}
+        <Panel
+          isOpen={showCalendarSources}
+          onDismiss={() => setShowCalendarSources(false)}
+          type={PanelType.medium}
+          headerText="Manage Calendar Sources"
+          closeButtonAriaLabel="Close"
+        >
+          <CalendarSourcesPanel
+            sources={calendarSources}
+            selectedSources={props.selectedCalendars}
+            onSourcesChange={(selected) => {
+              // Update web part properties
+              console.log('Selected sources changed:', selected);
+            }}
+            onClose={() => setShowCalendarSources(false)}
+          />
+        </Panel>
+      </div>
+    </ErrorBoundary>
   );
 };
 
