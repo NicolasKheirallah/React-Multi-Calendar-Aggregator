@@ -5,6 +5,8 @@ import { WebPartContext } from '@microsoft/sp-webpart-base';
  */
 export enum CalendarSourceType {
   SharePoint = 'SharePoint',
+  SharePointList = 'SharePointList',
+  SharePointCommunicationSite = 'SharePointCommunicationSite',
   Exchange = 'Exchange'
 }
 
@@ -25,6 +27,100 @@ export interface ICalendarSource {
   lastModified?: string;
   canEdit?: boolean;
   canShare?: boolean;
+}
+
+/**
+ * SharePoint List source interface
+ */
+export interface ISharePointListSource extends ICalendarSource {
+  type: CalendarSourceType.SharePointList;
+  listType: 'Events' | 'Calendar' | 'Custom' | 'Tasks' | 'Issues' | 'Announcements';
+  listTemplate: number;
+  viewUrl?: string;
+  defaultView?: string;
+  customFields?: ISharePointCustomField[];
+  permissions: ISharePointPermissions;
+  workflowEnabled?: boolean;
+  versioningEnabled?: boolean;
+  contentTypesEnabled?: boolean;
+  fieldMappings?: IFieldMapping;
+}
+
+/**
+ * SharePoint Communication Site source interface
+ */
+export interface ISharePointCommunicationSiteSource extends ICalendarSource {
+  type: CalendarSourceType.SharePointCommunicationSite;
+  hubSiteId?: string;
+  associatedHubSites?: string[];
+  newsEvents?: boolean;
+  pageEvents?: boolean;
+  eventWebParts?: string[];
+  announcementEvents?: boolean;
+  documentEvents?: boolean;
+  siteActivityEvents?: boolean;
+}
+
+/**
+ * SharePoint custom field interface
+ */
+export interface ISharePointCustomField {
+  internalName: string;
+  displayName: string;
+  fieldType: 'Text' | 'DateTime' | 'Choice' | 'User' | 'Lookup' | 'Number' | 'Boolean' | 'URL' | 'MultiChoice' | 'Note';
+  required: boolean;
+  mappedTo?: 'title' | 'description' | 'location' | 'category' | 'organizer' | 'attendees' | 'custom';
+  choices?: string[];
+  defaultValue?: string;
+  isMultiValue?: boolean;
+}
+
+/**
+ * SharePoint permissions interface
+ */
+export interface ISharePointPermissions {
+  canRead: boolean;
+  canWrite: boolean;
+  canDelete: boolean;
+  canManagePermissions: boolean;
+  canManageViews: boolean;
+  canApprove?: boolean;
+  canManageWebParts?: boolean;
+  effectivePermissions?: string[];
+  permissionLevel?: string;
+}
+
+/**
+ * Field mapping interface
+ */
+export interface IFieldMapping {
+  titleField?: string;
+  startDateField: string;
+  endDateField?: string;
+  descriptionField?: string;
+  locationField?: string;
+  categoryField?: string;
+  organizerField?: string;
+  allDayField?: string;
+  recurrenceField?: string;
+  importanceField?: string;
+  statusField?: string;
+}
+
+/**
+ * SharePoint List configuration interface
+ */
+export interface ISharePointListConfiguration {
+  includeCustomLists: boolean;
+  includeTaskLists: boolean;
+  includeIssueLists: boolean;
+  includeAnnouncementLists: boolean;
+  autoDiscoverDateFields: boolean;
+  enableWorkflowIntegration: boolean;
+  enableVersionHistory: boolean;
+  enableComments: boolean;
+  maxItemsPerList: number;
+  dateRangeMonths: number;
 }
 
 /**
@@ -59,6 +155,31 @@ export interface ICalendarEvent {
 }
 
 /**
+ * SharePoint event interface
+ */
+export interface ISharePointEvent extends ICalendarEvent {
+  listItemId?: number;
+  listItemUrl?: string;
+  workflowStatus?: string;
+  approvalStatus?: 'Approved' | 'Pending' | 'Rejected' | 'Draft';
+  customFields?: { [fieldName: string]: unknown };
+  sharePointAttachments?: ISharePointAttachment[];
+  versions?: ISharePointVersion[];
+  comments?: ISharePointComment[];
+  contentType?: string;
+  etag?: string;
+  hasAttachments?: boolean;
+  percentComplete?: number;
+  assignedTo?: string[];
+  priority?: string;
+  taskStatus?: string;
+  newsCategory?: string;
+  pageLayout?: string;
+  publishedDate?: Date;
+  expirationDate?: Date;
+}
+
+/**
  * Event attendee interface
  */
 export interface IEventAttendee {
@@ -66,7 +187,7 @@ export interface IEventAttendee {
   email: string;
   response: 'accepted' | 'declined' | 'tentative' | 'none';
   type: 'required' | 'optional' | 'resource';
-  isOrganizer?: boolean; // Add this field to match IEventModels
+  isOrganizer?: boolean;
   [key: string]: unknown;
 }
 
@@ -74,17 +195,59 @@ export interface IEventAttendee {
  * Event attachment interface
  */
 export interface IEventAttachment {
-  id?: string; // Add optional id field
+  id?: string;
   name: string;
   contentType: string;
   size: number;
   url?: string;
-  content?: string; // Add optional content field
+  content?: string;
   isInline: boolean;
-  lastModified?: Date; // Add optional lastModified field
+  lastModified?: Date;
   [key: string]: unknown;
 }
 
+/**
+ * SharePoint attachment interface
+ */
+export interface ISharePointAttachment {
+  fileName: string;
+  serverRelativeUrl: string;
+  size: number;
+  created: Date;
+  createdBy: string;
+  lastModified: Date;
+  contentType?: string;
+  checksum?: string;
+}
+
+/**
+ * SharePoint version interface
+ */
+export interface ISharePointVersion {
+  versionId: number;
+  versionLabel: string;
+  created: Date;
+  createdBy: string;
+  changeDescription?: string;
+  size?: number;
+  isCurrentVersion?: boolean;
+}
+
+/**
+ * SharePoint comment interface
+ */
+export interface ISharePointComment {
+  id: number;
+  text: string;
+  author: string;
+  authorEmail?: string;
+  created: Date;
+  modified?: Date;
+  replies?: ISharePointComment[];
+  isDeleted?: boolean;
+  likeCount?: number;
+  mentionedUsers?: string[];
+}
 
 /**
  * Calendar view types
@@ -296,6 +459,8 @@ export interface IIntegrationSettings {
     includeSites: string[];
     excludeSites: string[];
     includeSubsites: boolean;
+    includeCustomLists: boolean;
+    includeCommunicationSites: boolean;
   };
   exchange: {
     enabled: boolean;
@@ -313,4 +478,74 @@ export interface IIntegrationSettings {
     syncCategories: boolean;
     syncReminders: boolean;
   };
+}
+
+/**
+ * SharePoint Communication Site configuration interface
+ */
+export interface ISharePointCommunicationSiteConfiguration {
+  includeNewsEvents: boolean;
+  includePageEvents: boolean;
+  includeAnnouncementEvents: boolean;
+  includeDocumentEvents: boolean;
+  includeSiteActivityEvents: boolean;
+  newsDateRange: number; // days
+  pageUpdateEvents: boolean;
+  documentUploadEvents: boolean;
+  maxEventsPerSite: number;
+}
+
+/**
+ * Web part instance data interface
+ */
+export interface IWebPartInstanceData {
+  id: string;
+  webPartType: string;
+  title: string;
+  properties: Record<string, unknown>;
+  pageId: string;
+  pageTitle: string;
+  zoneIndex: number;
+  order: number;
+  isVisible: boolean;
+}
+
+/**
+ * News post interface
+ */
+export interface INewsPost {
+  id: number;
+  title: string;
+  description?: string;
+  authorByline?: string;
+  bannerImageUrl?: string;
+  created: Date;
+  modified: Date;
+  publishedDate?: Date;
+  firstPublishedDate?: Date;
+  canvasContent1?: string;
+  promotedState?: number;
+  topicHeader?: string;
+  url: string;
+  authorId?: number;
+  authorDisplayName?: string;
+}
+
+/**
+ * Site activity interface
+ */
+export interface ISiteActivity {
+  id: string;
+  activityType: 'PageCreated' | 'PageModified' | 'NewsPublished' | 'DocumentUploaded' | 'ListItemCreated' | 'ListItemModified';
+  title: string;
+  description?: string;
+  actor: string;
+  actorEmail?: string;
+  timestamp: Date;
+  resourceUrl: string;
+  resourceTitle: string;
+  siteId: string;
+  webId: string;
+  listId?: string;
+  itemId?: number;
 }

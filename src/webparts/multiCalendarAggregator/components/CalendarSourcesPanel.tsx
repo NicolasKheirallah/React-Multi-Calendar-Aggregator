@@ -108,7 +108,7 @@ export const CalendarSourcesPanel: React.FC<ICalendarSourcesPanelProps> = ({
   useEffect(() => {
     setSourcesWithHealth(sources.map(source => ({
       ...source,
-      healthStatus: 'checking',
+      healthStatus: 'checking' as const,
       healthMessage: 'Checking connection...'
     })));
   }, [sources]);
@@ -145,12 +145,12 @@ export const CalendarSourcesPanel: React.FC<ICalendarSourcesPanelProps> = ({
             responseTime,
             lastChecked: new Date()
           };
-        } catch (error) {
+        } catch {
           const responseTime = Date.now() - startTime;
           return {
             ...source,
             isHealthy: false,
-            healthStatus: 'error' as 'error',
+            healthStatus: 'error' as const,
             healthMessage: 'Connection failed',
             responseTime,
             lastChecked: new Date()
@@ -196,21 +196,26 @@ export const CalendarSourcesPanel: React.FC<ICalendarSourcesPanelProps> = ({
       let comparison = 0;
       
       switch (sortColumn) {
-        case 'title':
+        case 'title': {
           comparison = a.title.localeCompare(b.title);
           break;
-        case 'type':
+        }
+        case 'type': {
           comparison = a.type.localeCompare(b.type);
           break;
-        case 'health':
+        }
+        case 'health': {
           const healthOrder = { healthy: 0, warning: 1, error: 2, checking: 3 };
           comparison = (healthOrder[a.healthStatus || 'checking'] || 3) - (healthOrder[b.healthStatus || 'checking'] || 3);
           break;
-        case 'responseTime':
+        }
+        case 'responseTime': {
           comparison = (a.responseTime || 9999) - (b.responseTime || 9999);
           break;
-        default:
+        }
+        default: {
           comparison = a.title.localeCompare(b.title);
+        }
       }
       
       return sortDescending ? -comparison : comparison;
@@ -355,7 +360,9 @@ export const CalendarSourcesPanel: React.FC<ICalendarSourcesPanelProps> = ({
       text: 'Check Health',
       iconProps: { iconName: 'Heart' },
       disabled: isCheckingHealth,
-      onClick: () => void checkSourcesHealth()
+      onClick: (): void => {
+        checkSourcesHealth().catch(console.error);
+      }
     }
   ];
 
@@ -658,7 +665,9 @@ export const CalendarSourcesPanel: React.FC<ICalendarSourcesPanelProps> = ({
             
             <PrimaryButton
               text={saving ? 'Saving...' : 'Save Changes'}
-              onClick={handleSave}
+              onClick={(): void => {
+                handleSave().catch(console.error);
+              }}
               disabled={saving}
               iconProps={saving ? undefined : { iconName: 'Save' }}
             />
